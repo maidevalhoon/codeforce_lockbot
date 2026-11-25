@@ -1,6 +1,6 @@
 # Codeforces Lockout
 
-[Open Web App](https://cf-lockoutbot.streamlit.app/)
+[Open Web App](https://codeforcelockbot.streamlit.app/) · [GitHub (@maidevalhoon)](https://github.com/maidevalhoon/codeforce_lockbot)
 
 ## Overview
 
