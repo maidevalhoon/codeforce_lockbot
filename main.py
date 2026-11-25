@@ -3,10 +3,17 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import time
+import re
 import requests
 from bs4 import BeautifulSoup
 import random
 import cloudscraper
+
+GITHUB_ID = "maidevalhoon"
+GITHUB_PROFILE_URL = f"https://github.com/{GITHUB_ID}"
+GITHUB_REPO_URL = f"{GITHUB_PROFILE_URL}/codeforce_lockbot"
+
+st.set_page_config(page_title="Codeforces Lockout", layout="centered")
 
 
 def get_solved_problems(username):
@@ -35,21 +42,35 @@ def get_solved_problems(username):
 def get_problems(rating):
 
     url = f"https://codeforces.com/problemset?tags={rating}-{rating}"
-    
-    scraper = cloudscraper.create_scraper()  # Bypass Cloudflare
-    response = scraper.get(url)
-    
-    # print("Response Code:", response.status_code)
 
-    if response.status_code == 200:
-        soup = BeautifulSoup(response.text, "html.parser")
-        problems = soup.find_all('td', class_="id")
-        problem_list = [item.find('a').text.strip() for item in problems if item.find('a')]
-        return problem_list
-        
-    else:
-        print("Failed to fetch problems. Make sure the ratings are multiples of 100 between 800 and 3500. Status Code:", response.status_code)
-        return []
+    try:
+        scraper = cloudscraper.create_scraper()  # Bypass Cloudflare
+        response = scraper.get(url, timeout=15)
+
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, "html.parser")
+            problems = soup.find_all('td', class_="id")
+            problem_list = [item.find('a').text.strip() for item in problems if item.find('a')]
+            if problem_list:
+                return problem_list
+    except Exception as exc:
+        print("Cloudscraper failed, falling back to Codeforces API:", exc)
+
+    # Fallback to official Codeforces API when scraping is blocked on cloud hosts
+    try:
+        api_response = requests.get("https://codeforces.com/api/problemset.problems", timeout=15)
+        if api_response.status_code == 200:
+            target_rating = int(rating)
+            all_problems = api_response.json().get("result", {}).get("problems", [])
+            return [
+                f"{p['contestId']}{p['index']}"
+                for p in all_problems
+                if p.get("rating") == target_rating and "contestId" in p and "index" in p
+            ]
+    except Exception as exc:
+        print("Failed to fetch problems. Make sure the ratings are multiples of 100 between 800 and 3500.", exc)
+
+    return []
 
 
 def getlatestsolved(username):
@@ -79,9 +100,17 @@ def colour_red(val): return 'background-color: red'
 
 def colour_empty(val): return ''
 
+def apply_cell_style(styler, func, subset):
+    method = styler.map if hasattr(styler, "map") else styler.applymap
+    return method(func, subset=subset)
+
 def make_link(problem_id):
+    match = re.match(r"^(\d+)(.+)$", problem_id.strip())
+    if match:
+        num, letter = match.groups()
+        return f"https://codeforces.com/contest/{num}/problem/{letter}"
     num = problem_id[0:4]
-    letter = problem_id[4:]    
+    letter = problem_id[4:]
     return f"https://codeforces.com/contest/{num}/problem/{letter}"
 
 
@@ -159,7 +188,7 @@ def lockout(match_id):
 
     already_solved_set = set()
 
-    style1 = df_t.style.applymap(colour_empty, subset=pd.IndexSlice[players[0],0])
+    style1 = apply_cell_style(df_t.style, colour_empty, pd.IndexSlice[players[0],0])
 
     finished = 0
 
@@ -177,7 +206,7 @@ def lockout(match_id):
 
         for i in range(len_players):
 
-            solved_set = getlatestsolved(players[i])
+            solved_set = getlatestsolved(players[i]) or set()
 
             for j in range(len_problems):
 
@@ -192,9 +221,9 @@ def lockout(match_id):
 
                     for ii in range(len_players):
 
-                        if ii==i: style1 = style1.applymap(colour_green, subset=pd.IndexSlice[players[ii],j])
+                        if ii==i: style1 = apply_cell_style(style1, colour_green, pd.IndexSlice[players[ii],j])
                         
-                        else: style1 = style1.applymap(colour_red, subset=pd.IndexSlice[players[ii],j])
+                        else: style1 = apply_cell_style(style1, colour_red, pd.IndexSlice[players[ii],j])
 
         df_placeholder.dataframe(style1, use_container_width=True)
 
@@ -269,14 +298,17 @@ def waiting_room(match_id):
 
 def generate_match_id(user,players,target_time_str,match_duration,ratings,points,mode):
 
-    solved_set = get_solved_problems(user)
+    solved_set = get_solved_problems(user) or set()
     for player in players:
-        # solved_set += get_solved_problems(player)
-        solved_set = solved_set.union(get_solved_problems(player))
+        if player:
+            solved_set = solved_set.union(get_solved_problems(player) or set())
 
     problems=[]
     for rating in ratings:
         templist = get_problems(rating)
+        if not templist:
+            st.error(f"Could not fetch problems for rating {rating}.")
+            return ""
         safe=10000
         while safe:
             temp = random.choice(templist)
@@ -316,20 +348,21 @@ def create_click():
 
 def lockout_click(user,players,target_time_str,match_duration,ratings,points):
 
-    st.session_state['lockout'] = 1  
-
     match_id = generate_match_id(user,players,target_time_str,match_duration,ratings,points,"lockout")
+    if not match_id:
+        return
 
+    st.session_state['lockout'] = 1
     st.session_state['match_id'] = match_id
 
-    st.write(f"Send this match id to other players: {match_id}")  
+    st.write(f"Send this match id to other players: {match_id}")
 
 
 def match_details(user):
     
     players_str = st.text_input("Enter cf ids of other players (comma separated): ")
 
-    target_time_str = st.text_input("Enter match start time in (HH\:MM\:SS) format: ")
+    target_time_str = st.text_input("Enter match start time in (HH:MM:SS) format: ")
 
     match_duration = st.text_input("Enter duration of match in minutes: ")
 
@@ -373,6 +406,8 @@ def join_with_id():
         waiting_room(st.session_state['match_id'])
     
 
+
+st.caption(f"GitHub: [{GITHUB_ID}]({GITHUB_PROFILE_URL}) | [Repository]({GITHUB_REPO_URL})")
 
 if 'flag' not in st.session_state:
     st.session_state['flag'] = 0
