@@ -16,27 +16,33 @@ GITHUB_REPO_URL = f"{GITHUB_PROFILE_URL}/codeforce_lockbot"
 st.set_page_config(page_title="Codeforces Lockout", layout="centered")
 
 
+def _extract_problem_ids(submissions, only_ok=False):
+    """Return 'contestId+index' IDs from Codeforces submissions, skipping entries without contestId."""
+    solved_problem = set()
+    for submission in submissions:
+        if only_ok and submission.get("verdict") != "OK":
+            continue
+        problem = submission.get("problem", {})
+        contest_id = problem.get("contestId")
+        problem_index = problem.get("index")
+        if contest_id is not None and problem_index is not None:
+            solved_problem.add(f"{contest_id}{problem_index}")
+    return solved_problem
+
+
 def get_solved_problems(username):
 
     # Making API call to get user's submissions
-    response = requests.get(f"https://codeforces.com/api/user.status?handle={username}&from=1&count=1000")
+    response = requests.get(f"https://codeforces.com/api/user.status?handle={username}&from=1&count=1000", timeout=15)
 
     if response.status_code == 200:
-        submissions = response.json()["result"]
-        solved_problem = set()
+        data = response.json()
+        if data.get("status") != "OK":
+            return None
+        return _extract_problem_ids(data.get("result", []))
 
-        # Filtering submissions with verdict "OK"
-        for submission in submissions:
-            problem = submission["problem"]
-            contest_id = problem["contestId"]
-            problem_index = problem["index"]
-            s = str(contest_id)+str(problem_index)
-            solved_problem.add(s)
-        return solved_problem
-        
-    else:
-        print("Failed to fetch data. Make sure the usernames of the players are correct.")
-        return None
+    print("Failed to fetch data. Make sure the usernames of the players are correct.")
+    return None
     
 
 def get_problems(rating):
@@ -75,23 +81,15 @@ def get_problems(rating):
 
 def getlatestsolved(username):
 
-    response = requests.get(f"https://codeforces.com/api/user.status?handle={username}&from=1&count=3&verdict=OK")
+    response = requests.get(f"https://codeforces.com/api/user.status?handle={username}&from=1&count=3&verdict=OK", timeout=15)
     if response.status_code == 200:
-        submissions = response.json()["result"]
-        solved_problem = set()
+        data = response.json()
+        if data.get("status") != "OK":
+            return None
+        return _extract_problem_ids(data.get("result", []), only_ok=True)
 
-        # Filtering submissions with verdict "OK"
-        for submission in submissions:
-            if 'verdict' in submission and submission["verdict"] == "OK":
-                problem = submission["problem"]
-                contest_id = problem["contestId"]
-                problem_index = problem["index"]
-                s = str(contest_id)+str(problem_index)
-                solved_problem.add(s)
-        return solved_problem
-    else:
-        print("Failed to fetch data. Make sure the usernames of the players are correct.")
-        return None
+    print("Failed to fetch data. Make sure the usernames of the players are correct.")
+    return None
 
 
 def colour_green(val): return 'background-color: green'
@@ -225,7 +223,7 @@ def lockout(match_id):
                         
                         else: style1 = apply_cell_style(style1, colour_red, pd.IndexSlice[players[ii],j])
 
-        df_placeholder.dataframe(style1, use_container_width=True)
+        df_placeholder.dataframe(style1, width="stretch")
 
         sf = pd.DataFrame.from_dict(scoreboard, orient='index')
         sf_placeholder.dataframe(sf)
@@ -237,7 +235,7 @@ def lockout(match_id):
     Names = {'arnavra3' : 'Arno', 'KushKushal' : 'Kush', 'arrow_s' : 'Ashu', 'asterisk11' : 'Koni', 'isolve1400s' : 'Arno', 'kushkushali' : 'Rrho', 'redcar' : 'Satwik', 'bluecar' : 'Satwik'}
 
     winner = user
-    max = scoreboard[user]
+    max = scoreboard.get(user, 0)
 
     for player in players:
         if max < scoreboard[player]:
